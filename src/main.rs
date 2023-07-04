@@ -1,6 +1,7 @@
 use std::env;
 use svg::Document;
-use svg::node::element::path::{Command, Position};
+use svg::node::element::path::{Command, Data, Position};
+use svg::node::element::{Path, Rectangle};
 use crate::Operation::{Forvard, Home, Noop, TurnLeft, TurnRight};
 use crate::Orientation::{North, South, East, West};
 
@@ -8,6 +9,7 @@ const WIDTH: isize = 400;
 const HEIGHT: isize = WIDTH;
 const HOME_X: isize = WIDTH / 2;
 const HOME_Y: isize = HEIGHT / 2;
+const STROKE_WIDTH: usize = 5;
 
 
 #[derive(Debug, Clone, Copy)]
@@ -108,7 +110,36 @@ fn main() {
 }
 
 fn generate_svg(path_data: Vec<Command>) -> Document {
-    unimplemented!()
+    let background = Rectangle::new()
+        .set("x", 0)
+        .set("y", 0)
+        .set("width", WIDTH)
+        .set("height", HEIGHT)
+        .set("fill", "#ffffff");
+
+    let border = background
+        .clone()
+        .set("fill-opacity", "0.0")
+        .set("stroke", "#cccccc")
+        .set("stroke-width", 3 * STROKE_WIDTH);
+
+    let sketch = Path::new()
+        .set("fill", "none")
+        .set("stroke", "#2f2f2f")
+        .set("stroke-width", STROKE_WIDTH)
+        .set("stroke-opacity", "0.9")
+        .set("d", Data::from(path_data));
+
+    let document = Document::new()
+        .set("viewBox", (0,0, HEIGHT, WIDTH))
+        .set("height", HEIGHT)
+        .set("width", WIDTH)
+        .set("style", "style=\"outline: 5px solid #800000\"")
+        .add(background)
+        .add(sketch)
+        .add(border);
+
+    document
 }
 
 fn convert(operations: &Vec<Operation>) -> Vec<Command> {
