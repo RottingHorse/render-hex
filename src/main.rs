@@ -1,16 +1,17 @@
+use crate::Operation::{Forvard, Home, Noop, TurnLeft, TurnRight};
+use crate::Orientation::{East, North, South, West};
+use crossbeam::channel::unbounded;
 use std::env;
-use svg::Document;
+use std::thread;
 use svg::node::element::path::{Command, Data, Position};
 use svg::node::element::{Path, Rectangle};
-use crate::Operation::{Forvard, Home, Noop, TurnLeft, TurnRight};
-use crate::Orientation::{North, South, East, West};
+use svg::Document;
 
 const WIDTH: isize = 400;
 const HEIGHT: isize = WIDTH;
 const HOME_X: isize = WIDTH / 2;
 const HOME_Y: isize = HEIGHT / 2;
 const STROKE_WIDTH: usize = 5;
-
 
 #[derive(Debug, Clone, Copy)]
 enum Operation {
@@ -27,6 +28,11 @@ enum Orientation {
     East,
     West,
     South,
+}
+
+enum Work {
+    Task((usize, u8)),
+    Finished,
 }
 
 #[derive(Debug)]
@@ -131,7 +137,7 @@ fn generate_svg(path_data: Vec<Command>) -> Document {
         .set("d", Data::from(path_data));
 
     let document = Document::new()
-        .set("viewBox", (0,0, HEIGHT, WIDTH))
+        .set("viewBox", (0, 0, HEIGHT, WIDTH))
         .set("height", HEIGHT)
         .set("width", WIDTH)
         .set("style", "style=\"outline: 5px solid #800000\"")
@@ -145,9 +151,7 @@ fn generate_svg(path_data: Vec<Command>) -> Document {
 fn convert(operations: &Vec<Operation>) -> Vec<Command> {
     let mut turtle = Artist::new();
     let mut path_data: Vec<Command> = vec![];
-    let start_at_home = Command::Move(
-        Position::Absolute, (HOME_X, HOME_Y).into(),
-    );
+    let start_at_home = Command::Move(Position::Absolute, (HOME_X, HOME_Y).into());
     path_data.push(start_at_home);
 
     for op in operations {
@@ -160,30 +164,62 @@ fn convert(operations: &Vec<Operation>) -> Vec<Command> {
                 eprintln!("warning: illegal byte encountered: {:?}", byte)
             }
         };
-        let line = Command::Line(
-            Position::Absolute,
-            (turtle.x, turtle.y).into(),
-        );
+        let line = Command::Line(Position::Absolute, (turtle.x, turtle.y).into());
         path_data.push(line);
         turtle.wrap();
     }
     path_data
 }
 
-fn parse(input: &str) -> Vec<Operation> {
-    let mut steps = Vec::<Operation>::new();
-    for byte in input.bytes() {
-        let step = match byte {
-            b'0' => Home,
-            b'1'..=b'9' => {
-                let distance = { byte - 0x30 } as isize;
-                Forvard(distance * (HEIGHT / 10))
-            }
-            b'a' | b'b' | b'c' => TurnLeft,
-            b'd' | b'e' | b'f' => TurnRight,
-            _ => Noop(byte),
-        };
-        steps.push(step);
+fn parse_byte(byte: u8) -> Operation {
+    match byte {
+        b'0' => Home,
+        b'1'..=b'9' => {
+            let distance = (byte - 0x30) as isize;
+            Forvard(distance * (HEIGHT / 10))
+        }
+        b'a' | b'b' | b'c' => TurnLeft,
+        b'd' | b'e' | b'f' => TurnRight,
+        _ => Noop(byte),
     }
-    steps
+}
+
+fn parse(input: &str) -> Vec<Operation> {
+    let n_threads = 2;
+    let (todo_tx, todo_rx) = unbounded();
+    let (results_tx, results_rx) = unbounded();
+    let mut n_bytes = 0;
+
+    for (i, byte) in input.bytes().enumerate() {
+        todo_tx.send(Work::Task((i, byte))).unwrap();
+        n_bytes += 1;
+    }
+
+    for _ in 0..n_threads {
+        todo_tx.send(Work::Finished).unwrap();
+    }
+
+    for _ in 0..n_threads {
+        let todo = todo_rx.clone();
+        let results = results_tx.clone();
+
+        thread::spawn(move || loop {
+            let task = todo.recv();
+            let result = match task {
+                Err(_) => break,
+                Ok(Work::Finished) => break,
+                Ok(Work::Task((i, byte))) => (i, parse_byte(byte)),
+            };
+            results.send(result).unwrap();
+        });
+    }
+
+    let mut ops = vec![Noop(0); n_bytes];
+
+    for _ in 0..n_bytes {
+        let (i, op) = results_rx.recv().unwrap();
+        ops[i] = op;
+    }
+
+    ops
 }
